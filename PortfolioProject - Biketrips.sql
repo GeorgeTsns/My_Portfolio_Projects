@@ -158,13 +158,13 @@ SELECT usertype, COUNT(*) AS total_trips, time_period
 
  --and secondly the most popular ending stations
 
- SELECT TOP 5 usertype, to_station_name, COUNT(*) AS total_ride_startings
+ SELECT TOP 5 usertype, to_station_name, COUNT(*) AS total_ride_endings
  FROM biketripsQ1 
  WHERE usertype = 'Customer'
  GROUP BY to_station_name, usertype
  ORDER BY 3 DESC 
  
- SELECT TOP 5 usertype, to_station_name, COUNT(*) AS total_ride_startings
+ SELECT TOP 5 usertype, to_station_name, COUNT(*) AS total_ride_endings
  FROM biketripsQ1
  WHERE usertype = 'Subscriber'
  GROUP BY to_station_name, usertype
