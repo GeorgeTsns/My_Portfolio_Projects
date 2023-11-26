@@ -2,7 +2,6 @@
 
 
 -- To begin with, we need to do some data cleaning to better understand the data
--- We have already checked that there are no duplicates in excel
 -- We refer to annual members as Subscribers and to casual riders simply as Customers
 
 SELECT *
@@ -10,7 +9,20 @@ FROM biketripsQ1
 
 -- Data cleaning and understanding
 
--- Firstly, let's create a column to define the days of the week as names and not as number as it is in the original dataset
+-- Check for duplicates using ROW_NUMBER windows function with a cte
+WITH cte_row_num AS (
+SELECT *, 
+    ROW_NUMBER() OVER (PARTITION BY trip_id ORDER BY trip_id) as row_num
+FROM biketrips2015 AS duplicates
+)
+
+SELECT *
+FROM cte_row_num
+WHERE row_num > 1 
+-- There are no duplicate entries
+
+
+-- Now let's create a column to define the days of the week as names and not as number as it is in the original dataset
 -- We already know that Monday = 1 etc. 
 
 ALTER TABLE biketripsQ1
@@ -333,7 +345,7 @@ SELECT TOP 5 usertype, from_station_name, COUNT(*) AS total_ride_startings
 
  -- We gained useful insights for the different user types using data from quarters of the year
  -- Now we gathered all the data and put it in a new table that we created for the entire year
- -- We followed the same of process of data cleaning for each table that we created
+ -- We followed the same process of data cleaning for each table that we created
  -- Join July, August and September in one table using Union All and then insert the data in a new table 
 
  CREATE TABLE biketripsQ3(
@@ -469,8 +481,8 @@ SUM(CASE WHEN usertype = 'Subscriber' THEN 1 ELSE 0 END) AS total_subscriber_tri
   FROM biketrips2015 
   WHERE usertype <> 'Dependent' 
   )
-SELECT ROUND((total_customer_trips *100 / total_trips),1) AS customers_perc,
-       ROUND((total_subscriber_trips *100 / total_trips),1) AS subscribers_perc
+SELECT CONCAT(ROUND((total_customer_trips *100 / total_trips),2),'%') AS customers_perc,
+       CONCAT(ROUND((total_subscriber_trips *100 / total_trips),2),'%') AS subscribers_perc
 FROM cte_perc_of_total_rides
 
 
@@ -497,7 +509,8 @@ FROM biketrips2015
  
 )
 
-SELECT usertype, COUNT(*) AS total_trips, time_period
+SELECT usertype, COUNT(*) AS total_trips, time_period,
+CONCAT((100* COUNT(*) / SUM(COUNT(*)) OVER(PARTITION BY time_period)),'%') AS perc_of_total
   FROM peak_times
   WHERE usertype <> 'Dependent' 
   GROUP BY usertype, time_period
@@ -525,28 +538,72 @@ INSERT INTO #temp_percentage_change
  GROUP BY MONTH(starttime), usertype
 
  SELECT *,
- ROUND(((total_rides - prev_total_rides)*1.0 / prev_total_rides)*100,2) AS perc_diff
+ CONCAT(ROUND(((total_rides - prev_total_rides)*1.0 / prev_total_rides)*100,2), '%') AS perc_diff
  FROM #temp_percentage_change
 
  -- Let's find out the most popular starting stations for each type of user
 
- SELECT TOP 5
-     usertype, RANK() OVER (ORDER BY COUNT(*) DESC) AS ranking, 
+
+ SELECT * FROM (
+ SELECT usertype,
+          from_station_name, 
+          COUNT(*) AS total_trips,
+           ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS total_trips_rank,
+		   ROW_NUMBER() OVER (PARTITION BY usertype ORDER BY COUNT(*) DESC) AS rank_by_user,
+		   CASE WHEN (ROW_NUMBER() OVER (PARTITION BY usertype ORDER BY COUNT(*) DESC)) <= 5 THEN 'Top5' 
+		   ELSE 'No' END AS stations_ranking 
+ FROM biketrips2015
+ WHERE usertype <> 'Dependent'
+ GROUP BY usertype, from_station_name
+ ) a
+ WHERE stations_ranking = 'Top5'  
+
+
+ -- The top 5 most popular starting stations are completly different for the two different types of users
+ 
+ --Finally we want to create a table for the top 100 starting stations for each type of user
+ --Including latitude and longitude data from the stations dataset, to be able to create a map in Tableau
+ --And discover the hot areas for each customer type
+
+ --Create a temp table to insert data about the top 100 stations 
+ drop table if exists #top_stations
+ create table #top_stations ( 
+ usertype varchar(255), 
+ from_station_id FLOAT,
+ from_station_name nvarchar(255),
+ rides int)
+
+
+INSERT INTO #top_stations
+ SELECT TOP 100
+     usertype,
+	 from_station_id,
 	  from_station_name, 
 	  COUNT(*) AS rides
  FROM biketrips2015
  WHERE usertype = 'Subscriber' 
- GROUP BY from_station_name, usertype
+ GROUP BY from_station_name,from_station_id, usertype
  UNION ALL 
- SELECT TOP 5
-   usertype, RANK() OVER (ORDER BY COUNT(*) DESC) AS ranking, 
+ SELECT TOP 100
+   usertype,
+   from_station_id,
 	  from_station_name, 
 	  COUNT(*) AS rides
  FROM biketrips2015
  WHERE usertype = 'Customer' 
- GROUP BY from_station_name, usertype
+ GROUP BY from_station_name, from_station_id, usertype
+ ORDER BY 4
 
- -- The top 5 most popular starting stations are completly different for the two different types of users
+ -- Join the temp table with the stations dataset 
+ SELECT stat.usertype, stat.from_station_id, stat.from_station_name, stat.rides, geo.latitude, geo.longitude
+ FROM #top_stations as stat
+ JOIN Stations2015 as geo
+ ON stat.from_station_id = geo.id
+
+ SELECT *
+ FROM biketrips2015
+
+ 
 
  /*                            Insights and Findings                  /*
 
@@ -557,3 +614,5 @@ User Analysis: 1)Subscribers make by far the most trips in generall
 			   5)Customers overcome the trips from Subscribers only on Saturdays, exclusively in summer months
 			   6)Busiest day of the year is Wednesday and for month is July! That differs if we explore different quarters of the year independently
 			   7)Most popular day for Customers is Saturday, and for Subsribers is Wednesday
+
+			  
