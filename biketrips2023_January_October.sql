@@ -142,6 +142,20 @@ SET user_type = CASE WHEN member_casual = 'member' THEN 'Member'
 					 ELSE member_casual
 					 END;
 
+
+-- Create also a column for the months
+
+ALTER TABLE biketrips2023
+ADD month NVARCHAR(255);
+
+UPDATE biketrips2023
+SET month = 
+    CHOOSE(MONTH(started_at),
+        'January', 'February', 'March', 'April', 'May', 'June', 
+        'July', 'August', 'September', 'October', 'November', 'December')
+FROM biketrips2023;
+
+
 ------------------------------------------------- Data exploration ------------------------------------------------------------
 SELECT *
 FROM biketrips2023;
@@ -169,6 +183,13 @@ GROUP BY user_type, week_day
 ORDER BY 2,1
 -- Casual riders average duration increases during the weekend, the same goes for Members but not as much as Casuals 
 
+-- Calculate the trip duration for each month and user type
+SELECT user_type, month , 
+   CAST(DATEADD( ms,AVG(CAST(DATEDIFF( ms, '00:00:00', ISNULL(duration, '00:00:00')) as bigint)), '00:00:00' )  as TIME) as 'avg_duration'
+FROM biketrips2023
+GROUP BY user_type, month
+ORDER BY 3,1
+
 --Calculate the total trips by day of the week, and also discover the most famous day of the week
 
 SELECT  user_type, week_day, COUNT(*) AS total_rides
@@ -192,6 +213,31 @@ ORDER BY 3 DESC
  FROM perc_of_rides;
  -- One more time we notice that Annual Members have the most rides during our period
  -- Members have 62% and Casual Riders have 38% of the total rides
+
+
+ -- Now let's gain some insights about the progression of the number of rides from month to month
+ WITH ride_progr AS (
+ SELECT month, 
+        COUNT(*) AS total_trips,
+		LAG(COUNT(*),1) OVER (ORDER BY CASE month
+         WHEN 'January' THEN 1
+        WHEN 'February' THEN 2
+        WHEN 'March' THEN 3
+        WHEN 'April' THEN 4
+        WHEN 'May' THEN 5
+        WHEN 'June' THEN 6
+        WHEN 'July' THEN 7
+        WHEN 'August' THEN 8
+        WHEN 'September' THEN 9
+        WHEN 'October' THEN 10
+		END) AS prev_month
+ FROM biketrips2023
+ GROUP BY month)
+
+ SELECT month, total_trips,
+  CONCAT(ROUND(((total_trips - prev_month)*1.0 / prev_month)*100,2), '%') AS perc_diff
+ FROM ride_progr;
+
 
  --Find out the peak hours for the users
  -- We use a cte in which break the day into 2-hour segments using a Case
@@ -246,7 +292,34 @@ GROUP BY user_type,
 	   start_station_name ) a
 WHERE Top_stations = 'Top5' 
  --The Top5 starting stations are  different for each user
- 
+
+
+ -- Let's also explore the most common routes for each type of user, and the average duration for each route
+
+ SELECT user_type,
+         CONCAT(start_station_name, ' to ', end_station_name) AS route,
+		 COUNT(*) AS number_of_trips,
+   CAST(DATEADD( ms,AVG(CAST(DATEDIFF( ms, '00:00:00', ISNULL(duration, '00:00:00')) as bigint)), '00:00:00' )  as TIME) as avg_duration
+ FROM biketrips2023
+ GROUP BY user_type, start_station_name, end_station_name
+ ORDER BY 3 DESC
+
+
+ -- Find the cases where the user returned to the same station and compare them to the total rides for each user type
+
+WITH cte AS (
+ SELECT user_type,
+        CASE WHEN start_station_name = end_station_name THEN 'Same station'
+		     ELSE 'Other station'
+			 END AS path_definition
+ FROM biketrips2023) 
+
+  SELECT user_type, 
+           path_definition,
+		   COUNT(*)  as total,
+			CONCAT((100*COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY user_type)),'%') AS percent_per_user
+ FROM cte
+ GROUP BY user_type, path_definition ;
 
  -- Find the most used bike type 
 
@@ -337,7 +410,7 @@ FROM cte
 WHERE DATEDIFF(SECOND , 0, duration) > 0 AND distance_in_meters > 0) a
 --WHERE user_type = 'Member'
 
--- When we calculate the distance traveled we found out something very interesting, 
+-- When we calculated the distance traveled we found out something very interesting, 
 -- that many rides have the same starting and ending station, which means that the rider returned to the initial station
 -- This fact it is natural to affect our calculations of the averages, so we need to take it into consideration in our work
 -- It is wise to treat the cases where the distance is 0 as missing values 
@@ -508,3 +581,15 @@ WHERE
 FROM biketrips2023
 WHERE started_at between '2023-01-01' and '2023-03-31'
 GROUP BY user_type
+
+
+SELECT    a.start_station_name, a.start_lat, a.start_lng,
+          b.start_station_name, b.start_lat, b.start_lng
+FROM biketrips2023 a
+JOIN biketrips2023 b
+ON a.start_station_id = b. start_station_id
+   AND a.ride_id <> b.ride_id
+WHERE a.start_station_name IS NULL --AND b.start_station_name IS NOT NULL
+
+
+
